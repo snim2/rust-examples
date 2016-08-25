@@ -1,23 +1,23 @@
 use std::boxed::Box;
 use std::collections::HashMap;
+use std::collections::LinkedList;
 use std::io::prelude::*;
 use std::io;
 
+#[derive(PartialEq, Eq, Hash)]
+enum Associativity { LEFT, RIGHT, }
 
 enum SyntaxError {
     UnknownSymbol(String),
-    MissingRParen,
-    MissingLParen,
+    MismatchedParentheses,
     GeneralError,
 }
 
-
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash)]
 enum Token {
     LexicalError(String), LexicalNumber(i32), POW, PLUS, MINUS, TIMES, DIVIDE,
     MODULO, LPAREN, RPAREN,
 }
-
 
 enum Expr {
     Number(i32),
@@ -34,9 +34,11 @@ fn main() {
     use SyntaxError::*;
     let mut expression: Result<Expr, SyntaxError>;
     let mut terminated = false;
+    println!("Calculator REPL. Type 'quit' or 'exit' to end session.");
+    println!("Place spaces between all tokens: 1 + ( 2 * 3 )");
     while !terminated {
         let mut line = String::new();
-        print!("> ");
+        print!(">>> ");
         io::stdout().flush().ok().expect("Failed to flush from STDOUT.");
         io::stdin().read_line(&mut line).ok().expect("Failed to read from STDIN.");
         line = String::from(line.trim());
@@ -51,79 +53,152 @@ fn main() {
                                 Ok(number) => println!("{}", number),
                                 Err(_) => println!("Cannot divide by zero!")
                             },
-                Err(errno) => match errno {
-                                  UnknownSymbol(symbol) => println!("Unknown symbol: {}", symbol),
-                                  MissingRParen => println!("Missing )."),
-                                  MissingLParen => println!("Missing (."),
-                                  GeneralError => println!("Syntax error."),
-                              },
+                Err(errno) =>
+                    match errno {
+                        UnknownSymbol(symbol) => println!("Unknown symbol: {}", symbol),
+                        MismatchedParentheses => println!("Mismatched ( and )."),
+                        GeneralError => println!("Syntax error."),
+                    },
            }
        }
     }
 }
 
 
-fn lex(line: &String) -> Vec<Token> {
+fn lex(line: &String) -> LinkedList<Token> {
     use Token::*;
     let strings = line.trim().split(" ");
-    let mut tokens: Vec<Token> = Vec::new();
+    let mut tokens: LinkedList<Token> = LinkedList::new();
     for lexeme in strings {
         match lexeme {
-            "^" => tokens.push(POW),
-            "+" => tokens.push(PLUS),
-            "-" => tokens.push(MINUS),
-            "*" => tokens.push(TIMES),
-            "/" => tokens.push(DIVIDE),
-            "%" => tokens.push(MODULO),
-            "(" => tokens.push(LPAREN),
-            ")" => tokens.push(RPAREN),
+            "^" => tokens.push_back(POW),
+            "+" => tokens.push_back(PLUS),
+            "-" => tokens.push_back(MINUS),
+            "*" => tokens.push_back(TIMES),
+            "/" => tokens.push_back(DIVIDE),
+            "%" => tokens.push_back(MODULO),
+            "(" => tokens.push_back(LPAREN),
+            ")" => tokens.push_back(RPAREN),
             number => match number.parse() {
-                        Ok(num) => tokens.push(LexicalNumber(num)),
-                        Err(_) => tokens.push(LexicalError(String::from(lexeme))),
-                      }
+                        Ok(num) => tokens.push_back(LexicalNumber(num)),
+                        Err(_) => tokens.push_back(LexicalError(String::from(lexeme))),
+                      },
         }
     }
     tokens
 }
 
 
-fn parse(tokens: Vec<Token>) -> Result<Expr, SyntaxError> {
+fn parse(tokens: LinkedList<Token>) -> Result<Expr, SyntaxError> {
+    use Associativity::*;
     use Expr::*;
     use SyntaxError::*;
     use Token::*;
     // Operator-precedence table.
-    let mut op_table : HashMap<Token, (u32, &str)> = HashMap::new();
-    op_table.insert(POW,    (4, "R"));
-    op_table.insert(TIMES,  (3, "L"));
-    op_table.insert(DIVIDE, (3, "L"));
-    op_table.insert(PLUS,   (2, "L"));
-    op_table.insert(MINUS,  (2, "L"));
-    op_table.insert(MODULO, (1, "L"));
-    op_table.insert(LPAREN, (9, "L"));
-    op_table.insert(RPAREN, (0, "L"));
+    let mut op_table : HashMap<Token, (u32, Associativity)> = HashMap::new();
+    op_table.insert(POW,    (4, RIGHT));
+    op_table.insert(TIMES,  (3, LEFT));
+    op_table.insert(DIVIDE, (3, LEFT));
+    op_table.insert(PLUS,   (2, LEFT));
+    op_table.insert(MINUS,  (2, LEFT));
+    op_table.insert(MODULO, (1, LEFT));
+    op_table.insert(LPAREN, (9, LEFT));
+    op_table.insert(RPAREN, (0, LEFT));
     // Dijkstra's shunting-yard algorithm.
     let mut operator_stack: Vec<Token> = Vec::new();
-    let mut operand_stack: Vec<Expr> = Vec::new();
-    'outer: for token in tokens {
+    let mut operand_queue: LinkedList<Expr> = LinkedList::new();
+    for token in tokens {
         match token {
             LexicalError(error) => return Err(UnknownSymbol(error.clone())),
-            LexicalNumber(number) => operand_stack.push(Number(number)),
+            LexicalNumber(number) => operand_queue.push_back(Number(number)),
             LPAREN => operator_stack.push(LPAREN),
-            RPAREN => (),
-            _ => (),
-            // POW => (),
-            // DIVIDE => (),
-            // TIMES => (),
-            // PLUS => (),
-            // MINUS => (),
-            // MODULO => (),
+            RPAREN => {
+                while *operator_stack.last().unwrap() != LPAREN {
+                    if operator_stack.len() == 0 {
+                        return Err(MismatchedParentheses);
+                    }
+                    let l_op = operand_queue.pop_front().unwrap();
+                    let r_op = operand_queue.pop_front().unwrap();
+                    match construct_expr(operator_stack.pop(), l_op, r_op) {
+                        Ok(expr) => operand_queue.push_back(expr),
+                        Err(error) => return Err(error),
+                    };
+                };
+                if operator_stack.len() == 0 {
+                    return Err(MismatchedParentheses);
+                }
+                operator_stack.pop();  // Remove matching LPAREN.
+            },
+            operator =>
+                if operator_stack.len() == 0 ||
+                   *operator_stack.last().unwrap() == LPAREN {
+                      operator_stack.push(operator);
+                } else {
+                    loop {
+                        let op2 = operator_stack.pop().unwrap();
+                        let (ref p1, ref a1) = *(op_table.get(&operator).unwrap());
+                        let (ref p2, _) = *(op_table.get(&op2).unwrap());
+                        if (p1 < p2 && *a1 == RIGHT) || (p1 <= p2 && *a1 == LEFT) {
+                            let l_op = operand_queue.pop_front().unwrap();
+                            let r_op = operand_queue.pop_front().unwrap();
+                            let op2_pop = operator_stack.pop();
+                            match construct_expr(op2_pop, l_op, r_op) {
+                                Ok(expr) => operand_queue.push_back(expr),
+                                Err(error) => return Err(error),
+                            }
+                        } else {
+                            operator_stack.push(op2);
+                            break;
+                        }
+                    }
+                    operator_stack.push(operator);
+                },
         }
     }
-    if operand_stack.len() == 1 {
-        let expr: Expr = operand_stack.pop().unwrap();
-        return Ok(expr);
+    // All tokens have been consumed from user input.
+    while operator_stack.len() > 0 {
+        match operator_stack.pop() {
+            None => return Err(GeneralError),
+            Some(LPAREN) => return Err(MismatchedParentheses),
+            Some(RPAREN) => return Err(MismatchedParentheses),
+            Some(LexicalError(error)) => return Err(UnknownSymbol(error.clone())),
+            operator => {
+                if operand_queue.len() < 2 {
+                    return Err(GeneralError);
+                } else {
+                    let l_op = operand_queue.pop_front().unwrap();
+                    let r_op = operand_queue.pop_front().unwrap();
+                    match construct_expr(operator, l_op, r_op) {
+                        Ok(expr) => operand_queue.push_back(expr),
+                        Err(error) => return Err(error),
+                    };
+                }
+            },
+        };
+    };
+    if operand_queue.len() != 1 {
+        return Err(GeneralError);
     }
-    Err(GeneralError)
+    Ok(operand_queue.pop_front().unwrap())
+}
+
+
+fn construct_expr(token: Option<Token>, l_op: Expr, r_op: Expr) -> Result<Expr, SyntaxError> {
+    use Expr::*;
+    use SyntaxError::*;
+    use Token::*;
+    let expr : Expr;
+    match token {
+        Some(POW) => expr = Pow(Box::new(l_op), Box::new(r_op)),
+        Some(DIVIDE) => expr = Divide(Box::new(l_op), Box::new(r_op)),
+        Some(TIMES) => expr = Times(Box::new(l_op), Box::new(r_op)),
+        Some(PLUS) => expr = Plus(Box::new(l_op), Box::new(r_op)),
+        Some(MINUS) => expr = Minus(Box::new(l_op), Box::new(r_op)),
+        Some(MODULO) => expr = Modulo(Box::new(l_op), Box::new(r_op)),
+        Some(LexicalError(error)) => return Err(UnknownSymbol(error.clone())),
+        _ => return  Err(GeneralError),
+    };
+    Ok(expr)
 }
 
 
@@ -132,7 +207,7 @@ fn evaluate(expr: &Expr) -> Result<i32, String> {
     match expr {
         &Number(n) => Ok(n),
         &Pow(ref e_left, ref e_right) =>
-            Ok(evaluate(e_left).unwrap() ^ evaluate(e_right).unwrap()),
+            Ok(evaluate(e_left).unwrap().pow(evaluate(e_right).unwrap() as u32)),
         &Plus(ref e_left, ref e_right) =>
             Ok(evaluate(e_left).unwrap() + evaluate(e_right).unwrap()),
         &Minus(ref e_left, ref e_right) =>
