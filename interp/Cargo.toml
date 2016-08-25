@@ -1,0 +1,6 @@
+[package]
+name = "interp"
+version = "0.1.0"
+authors = ["Sarah Mount <sarah.mount@kcl.ac.uk>"]
+
+[dependencies]
