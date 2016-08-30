@@ -39,7 +39,7 @@ fn main() {
     while !terminated {
         let mut line = String::new();
         print!(">>> ");
-        io::stdout().flush().ok().expect("Failed to flush from STDOUT.");
+        io::stdout().flush().ok();
         io::stdin().read_line(&mut line).ok().expect("Failed to read from STDIN.");
         line = String::from(line.trim());
         if line == "exit" || line == "quit" {
@@ -53,12 +53,9 @@ fn main() {
                                 Ok(number) => println!("{}", number),
                                 Err(_) => println!("Cannot divide by zero!")
                             },
-                Err(errno) =>
-                    match errno {
-                        UnknownSymbol(symbol) => println!("Unknown symbol: {}", symbol),
-                        MismatchedParentheses => println!("Mismatched ( and )."),
-                        GeneralError => println!("Syntax error."),
-                    },
+                Err(UnknownSymbol(symbol)) => println!("Unknown symbol: {}", symbol),
+                Err(MismatchedParentheses) => println!("Mismatched ( and )."),
+                Err(GeneralError) => println!("Syntax error."),
            }
        }
     }
