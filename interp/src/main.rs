@@ -110,7 +110,7 @@ fn parse(tokens: LinkedList<Token>) -> Result<Expr, SyntaxError> {
     for token in tokens {
         match token {
             LexicalError(error) => return Err(UnknownSymbol(error.clone())),
-            LexicalNumber(number) => operand_queue.push_back(Number(number)),
+            LexicalNumber(number) => operand_queue.push_front(Number(number)),
             LPAREN => operator_stack.push(LPAREN),
             RPAREN => {
                 while *operator_stack.last().unwrap() != LPAREN {
