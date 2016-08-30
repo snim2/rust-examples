@@ -8,6 +8,7 @@ use std::io;
 enum Associativity { LEFT, RIGHT, }
 
 enum SyntaxError {
+    MalformedNumber(String),
     UnknownSymbol(String),
     MismatchedParentheses,
     GeneralError,
@@ -15,8 +16,8 @@ enum SyntaxError {
 
 #[derive(PartialEq, Eq, Hash)]
 enum Token {
-    LexicalError(String), LexicalNumber(i32), POW, PLUS, MINUS, TIMES, DIVIDE,
-    MODULO, LPAREN, RPAREN,
+    UnknownToken(String), LexicalError(String), LexicalNumber(i32),
+    POW, PLUS, MINUS, TIMES, DIVIDE, MODULO, LPAREN, RPAREN,
 }
 
 enum Expr {
@@ -35,7 +36,6 @@ fn main() {
     let mut expression: Result<Expr, SyntaxError>;
     let mut terminated = false;
     println!("Calculator REPL. Type 'quit' or 'exit' to end session.");
-    println!("Place spaces between all tokens: 1 + ( 2 * 3 )");
     while !terminated {
         let mut line = String::new();
         print!(">>> ");
@@ -53,9 +53,10 @@ fn main() {
                                 Ok(number) => println!("{}", number),
                                 Err(_) => println!("Cannot divide by zero!")
                             },
-                Err(UnknownSymbol(symbol)) => println!("Unknown symbol: {}", symbol),
-                Err(MismatchedParentheses) => println!("Mismatched ( and )."),
                 Err(GeneralError) => println!("Syntax error."),
+                Err(MalformedNumber(number)) => println!("Cannot make a number from {}", number),
+                Err(MismatchedParentheses) => println!("Mismatched ( and )."),
+                Err(UnknownSymbol(symbol)) => println!("Unknown symbol: {}", symbol),
            }
        }
     }
@@ -64,22 +65,42 @@ fn main() {
 
 fn lex(line: &String) -> LinkedList<Token> {
     use Token::*;
-    let strings = line.trim().split(" ");
     let mut tokens: LinkedList<Token> = LinkedList::new();
-    for lexeme in strings {
-        match lexeme {
-            "^" => tokens.push_back(POW),
-            "+" => tokens.push_back(PLUS),
-            "-" => tokens.push_back(MINUS),
-            "*" => tokens.push_back(TIMES),
-            "/" => tokens.push_back(DIVIDE),
-            "%" => tokens.push_back(MODULO),
-            "(" => tokens.push_back(LPAREN),
-            ")" => tokens.push_back(RPAREN),
-            number => match number.parse() {
-                        Ok(num) => tokens.push_back(LexicalNumber(num)),
-                        Err(_) => tokens.push_back(LexicalError(String::from(lexeme))),
-                      },
+    let mut int_builder = String::from("");
+    let mut iterator = line.chars().peekable();
+    loop {
+        match iterator.next() {
+            Some(lexeme) => match lexeme {
+                '0' ... '9' => {
+                    int_builder.push(lexeme);
+                    if iterator.peek().is_none() ||
+                        !iterator.peek().unwrap().is_digit(10) {
+                        match int_builder.parse() {
+                            Ok(num) => tokens.push_back(LexicalNumber(num)),
+                            Err(_) => tokens.push_back(LexicalError(String::from(int_builder))),
+                        };
+                        int_builder = String::from("");
+                    }
+                },
+                '^' => tokens.push_back(POW),
+                '+' => tokens.push_back(PLUS),
+                '-' => if iterator.peek().unwrap().is_digit(10) {
+                        int_builder.push(lexeme);
+                        } else {
+                            tokens.push_back(MINUS);
+                        },
+                '*' => tokens.push_back(TIMES),
+                '/' => tokens.push_back(DIVIDE),
+                '%' => tokens.push_back(MODULO),
+                '(' => tokens.push_back(LPAREN),
+                ')' => tokens.push_back(RPAREN),
+                _ => if lexeme.is_whitespace() {
+                        continue;
+                     } else {
+                        tokens.push_back(UnknownToken(char::to_string(&lexeme)));
+                    },
+            },
+            None => break,
         }
     }
     tokens
@@ -106,7 +127,8 @@ fn parse(tokens: LinkedList<Token>) -> Result<Expr, SyntaxError> {
     let mut operand_queue: LinkedList<Expr> = LinkedList::new();
     for token in tokens {
         match token {
-            LexicalError(error) => return Err(UnknownSymbol(error.clone())),
+            UnknownToken(error) => return Err(UnknownSymbol(error.clone())),
+            LexicalError(error) => return Err(MalformedNumber(error.clone())),
             LexicalNumber(number) => operand_queue.push_front(Number(number)),
             LPAREN => operator_stack.push(LPAREN),
             RPAREN => {
